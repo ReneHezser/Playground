@@ -1,0 +1,142 @@
+# namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mqtt
+---
+# secret password file
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mqtt-secret-password
+  namespace: mqtt
+type: Opaque
+data:
+  passwd: bXF0dHVzZXI6JDckMTAxJDdDOVBoQ1UzL2U5aUN0NEokaW1YYzFTRThjNHdGNFdqdXVTSVhDckpsKzU1OE9PMWNnUk9JUHFKMmhVTGdWNUlLNmZkdWF1WExaV1JjV1JuMzllTDQ5VXQ4RnVtYnpucG8vaUdDeXc9PQ==
+---
+# configMap mosquitto.conf
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mqtt-configmap-config
+  namespace: mqtt
+data:
+   mosquitto.conf: |    
+    persistence true
+    persistence_location /mosquitto/data/
+    # per_listener_settings false
+    log_dest stdout
+    # listener 1886
+    listener 1883
+    protocol mqtt
+    # Defaults to false, unless there are no listeners defined in the configuration
+    # file, in which case it is set to true, but connections are only allowed from
+    # the local machine.
+    allow_anonymous false
+    password_file /mosquitto/etc/passwd
+    #    cafile: /mosquitto/config/certs/ca.crt
+    #    certfile: /mosquitto/config/certs/server.crt
+    #    keyfile: /mosquitto/config/certs/server.key
+    require_certificate false
+    use_identity_as_username false
+---
+# deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mqtt-broker
+  namespace: mqtt
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mqtt-broker  
+  template:
+    metadata:
+      labels:
+        app: mqtt-broker    
+    spec:
+      containers:
+      - name: mqtt-broker  
+        image: eclipse-mosquitto:2.0.14
+        resources:
+          limits:
+            memory: "128Mi"
+            cpu: "500m"
+        ports:
+        - containerPort: 1883
+          name: mqtt
+        - containerPort: 8080
+          name: websocket
+        volumeMounts:
+          - name: password-file
+            mountPath: /mosquitto/etc
+            readOnly: true
+          - name: mosquitto-data
+            mountPath: /mosquitto/data
+          - name: mosquitto-log
+            mountPath: /mosquitto/log
+          - name: mosquitto-config
+            mountPath: /mosquitto/config
+            readOnly: true
+      volumes:
+      - name: mosquitto-config
+        configMap:
+          name: mqtt-configmap-config
+      - name: password-file
+        secret:
+          secretName: mqtt-secret-password
+          optional: true
+      - name: mosquitto-data
+        persistentVolumeClaim:
+          claimName: mqtt-data-pvc
+      - name: mosquitto-log
+        persistentVolumeClaim:
+          claimName: mqtt-log-pvc
+---
+# persistent volume claim - data
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mqtt-data-pvc
+  namespace: mqtt
+spec:
+  resources:
+    requests:
+      storage: 2Gi
+  volumeMode: Filesystem
+  accessModes: 
+  - ReadWriteOnce
+---
+# persistent volume claim - log
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mqtt-log-pvc
+  namespace: mqtt
+spec:
+  resources:
+    requests:
+      storage: 1Gi
+  volumeMode: Filesystem
+  accessModes: 
+  - ReadWriteOnce
+---
+# service
+apiVersion: v1
+kind: Service
+metadata:
+  name: mqtt-service
+  namespace: mqtt
+spec:
+  selector:
+    app: mqtt-broker
+  type: NodePort
+  ports:
+  - port: 1883
+    targetPort: 1883
+    nodePort: 31883
+    name: mqtt
+  - port: 8080
+    targetPort: 8080
+    name: websocket
